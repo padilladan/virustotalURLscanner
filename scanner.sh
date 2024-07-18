@@ -1,153 +1,169 @@
 #!/bin/bash
 
-# Variables
-api=""
-url=""
-output_file=""  # Output PDF file path
-generate_pdf=false
-rescan=false
+# Function to display the help message
+show_help() {
+    echo "Usage: ./scanner.sh [-a api_key] [-u url] [-p] [-r] [-h]"
+    echo "  -a: (Required) Set the API key for VirusTotal."
+    echo "  -u: (Required) Set the URL to be scanned."
+    echo "  -p: Generate a PDF report of the scan results."
+    echo "  -r: Rescan the URL."
+    echo "  -h: Display this help message."
+}
 
-# This will process the flags used with the command
-while getopts "a:u:pr" opt; do
-  case $opt in
-    a) api="$OPTARG" ;;  # Set API key
-    u) url="$OPTARG" ;;  # Set URL
-    p) generate_pdf=true ;;  # Flag to generate PDF
-    r) rescan=true ;;  # Flag to rescan the URL
-    \?) echo "Usage: cmd [-a api_key] [-u url] [-p] [-r]" >&2
+# Function to submit URL for analysis
+submit_url() {
+    response=$(curl --silent --request POST --url https://www.virustotal.com/api/v3/urls --form url="$url" --header "x-apikey: $api_key")
+    analysis_id=$(echo "$response" | jq -r '.data.id')
+    if [[ $analysis_id == null ]]; then
+        echo "Error in URL submission: $response"
         exit 1
-        ;;
-  esac
+    else
+        echo "URL submitted successfully"
+        echo "Analysis ID: $analysis_id"
+    fi
+    check_for_date_time "submit_url" "$response"
+}
+
+# Function to check analysis status
+check_analysis_status() {
+    local status="queued"
+    local counter=0
+
+    while [[ "$status" == "queued" && "$counter" -lt 10 ]]; do
+        ((counter++))
+        analysis_response=$(curl --silent --request GET --url "https://www.virustotal.com/api/v3/analyses/$analysis_id" --header "x-apikey: $api_key")
+        status=$(echo "$analysis_response" | jq -r '.data.attributes.status')
+
+        if [[ "$status" == "queued" ]]; then
+            sleep 2
+        fi
+    done
+
+    if [[ "$status" == "queued" ]]; then
+        echo "Reached 10 API requests"
+        echo "The analysis is taking longer than expected."
+        exit 1
+    else
+        if [[ "$generate_pdf" == "false" ]]; then
+            echo "Full analysis response:"
+            echo "$analysis_response" | jq '.'
+        fi
+        response="$analysis_response"
+        check_for_date_time "check_analysis_status" "$response"
+    fi
+}
+
+# Function to request a URL rescan
+request_url_rescan() {
+    response=$(curl --silent --request POST --url https://www.virustotal.com/api/v3/urls/"$analysis_id"/analyse --header "x-apikey: $api_key")
+    check_for_date_time "request_url_rescan" "$response"
+
+    local status="queued"
+    local counter=0
+
+    while [[ "$status" == "queued" && "$counter" -lt 10 ]]; do
+        ((counter++))
+        analysis_response=$(curl --silent --request GET --url "https://www.virustotal.com/api/v3/analyses/$analysis_id" --header "x-apikey: $api_key")
+        status=$(echo "$analysis_response" | jq -r '.data.attributes.status')
+
+        if [[ "$status" == "queued" ]]; then
+            sleep 2
+        fi
+    done
+
+    if [[ "$status" == "queued" ]]; then
+        echo "Reached 10 API requests"
+        echo "The analysis is taking longer than expected."
+        exit 1
+    else
+        if [[ "$generate_pdf" == "false" ]]; then
+            echo "Full analysis response:"
+            echo "$analysis_response" | jq '.'
+        fi
+        response="$analysis_response"
+        check_for_date_time "request_url_rescan" "$response"
+    fi
+}
+
+# Function to get URL/file analysis
+get_url_file_analysis() {
+    read -p "Do you want to proceed with the URL rescan? (y/n): " confirm
+    if [[ "$confirm" == "y" ]]; then
+        request_url_rescan
+        if [[ "$generate_pdf" == "true" ]]; then
+            save_as_pdf
+        fi
+    else
+        echo "Analysis canceled by the user."
+        exit 0
+    fi
+}
+
+# Function to save the response as a PDF
+save_as_pdf() {
+    timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
+    domain=$(echo "$url" | awk -F/ '{print $3}' | sed 's/^www\.//')
+    json_file=~/Desktop/"$domain"_"$timestamp"_report.json
+    html_file=~/Desktop/"$domain"_"$timestamp"_report.html
+    pdf_file=~/Desktop/"$domain"_"$timestamp"_report.pdf
+
+    echo "$response" | jq '.' > "$json_file"
+
+    echo "<html><body><pre>$(cat "$json_file")</pre></body></html>" > "$html_file"
+
+    wkhtmltopdf "$html_file" "$pdf_file" > /dev/null 2>&1
+
+    rm "$json_file" "$html_file"
+
+    echo "PDF report generated at $pdf_file"
+}
+
+# Function to check for date/time values and print them in human-readable form
+check_for_date_time() {
+    local command="$1"
+    local response="$2"
+    local dates
+    dates=$(echo "$response" | jq -r '.. | .date? // empty')
+
+    if [[ -n "$dates" ]]; then
+        echo "Command: $command"
+        for date in $dates; do
+            readable_date=$(date -r "$date" +"%Y-%m-%d %H:%M:%S")
+            echo "Date: $readable_date"
+        done
+    fi
+}
+
+# Initialize variables
+api_key=""
+url=""
+generate_pdf="false"
+rescan="false"
+
+# Parse command-line options
+while getopts "a:u:prh" opt; do
+    case $opt in
+        a) api_key="$OPTARG" ;;
+        u) url="$OPTARG" ;;
+        p) generate_pdf="true" ;;
+        r) rescan="true" ;;
+        h) show_help; exit 0 ;;
+        *) show_help; exit 1 ;;
+    esac
 done
 
-# Check if the flags are provided
-if [[ -z "$api" || -z "$url" ]]; then
-  echo "Both API key and URL must be provided."
-  echo "Usage: $0 -a api_key -u url [-p] [-r]"
-  exit 1
+# Validate required options
+if [[ -z "$api_key" || -z "$url" ]]; then
+    show_help
+    exit 1
 fi
 
-# Extract domain name, remove protocol, "www.", and ".com"
-domain=$(echo "$url" | awk -F[/:] '{print $4}' | sed 's/^www\.//;s/\.com$//')
-output_file="$HOME/Desktop/${domain}_report.pdf"
-
-# Check if the file already exists, and if so, add a timestamp
-if [ -f "$output_file" ]; then
-  timestamp=$(date +"%Y%m%d_%H%M%S")
-  output_file="$HOME/Desktop/${domain}_report_$timestamp.pdf"
-fi
-
-# Initial scan POST request
-initial_scan_response=$(curl --silent --request POST \
-  --url https://www.virustotal.com/api/v3/urls \
-  --form "url=$url" \
-  --header "x-apikey: $api")
-
-# Debugging: Print the full initial scan response
-echo "Initial scan response:"
-echo "$initial_scan_response" | jq .
-
-# Extract the URL ID from the initial scan POST response
-url_id=$(echo "$initial_scan_response" | jq -r '.data.id' | sed 's/^u-//')
-
-# Check if URL ID is not empty
-if [ -z "$url_id" ]; then
-  echo "Failed to create the report on VirusTotal API"
-  exit 1
-fi
-
-# Variable to store the analysis ID
-analysis_id=""
-
-# If rescan flag is set, confirm with the user
-if [ "$rescan" = true ]; then
-  echo "Are you sure you want to rescan the URL? (y/n)"
-  read confirmation
-  if [[ "$confirmation" =~ ^[Yy]$ ]]; then
-    echo "Re-scanning...may take a few minutes"
-
-    # Debugging: print URL ID
-    echo "Using URL ID for rescan: $url_id"
-
-    # Rescan POST request
-    rescan_response=$(curl --silent --request POST \
-      --url "https://www.virustotal.com/api/v3/urls/${url_id}/analyse" \
-      --header "x-apikey: $api")
-
-    echo "Rescan initiated for URL: $url"
-
-    # Troubleshooting step to print the full rescan response
-    echo "Full rescan response:"
-    echo "$rescan_response" | jq .
-
-    # Extract the new analysis ID from the rescan response
-    analysis_id=$(echo "$rescan_response" | jq -r '.data.id')
-
-    # Troubleshooting step to print the extracted ID
-    echo "Extracted analysis ID from rescan response: $analysis_id"
-
-    # Check if the new analysis ID is not empty
-    if [ -z "$analysis_id" ]; then
-      echo "Failed to initiate rescan"
-      exit 1
-    fi
-  fi
-fi
-
-# If no rescan or user declined rescan, use the initial analysis ID
-if [ -z "$analysis_id" ]; then
-  # Extract the analysis ID from the initial POST response
-  analysis_id=$(echo "$initial_scan_response" | jq -r '.data.id')
-fi
-
-# Run curl and save the result to a temporary file using the analysis ID from the rescan response
-response=$(curl --silent --request GET --url "https://www.virustotal.com/api/v3/analyses/$analysis_id" --header "x-apikey: $api")
-
-# Print the response in JSON format for troubleshooting
-echo "GET response:"
-echo "$response" | jq .
-
-# Check if response is not empty
-if [ -z "$response" ]; then
-  echo "No response from VirusTotal API"
-  exit 1
-fi
-
-# Extract the last_analysis_date or fallback to date if not present
-last_analysis_date=$(echo "$response" | jq -r '.data.attributes.last_analysis_date // .data.attributes.date')
-
-# Convert the Unix timestamp to a readable date format using a portable method
-if [[ "$last_analysis_date" =~ ^[0-9]+$ ]]; then
-  readable_date=$(date -u -d @"$last_analysis_date" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -u -r "$last_analysis_date" '+%Y-%m-%d %H:%M:%S')
+# Main workflow
+if [[ "$rescan" == "true" ]]; then
+    submit_url
+    get_url_file_analysis
 else
-  readable_date="N/A"
-fi
-
-# Print the last_analysis_date
-echo "Last scan of site: $readable_date"
-
-# Print the response if the PDF flag is not set
-if [ "$generate_pdf" = false ]; then
-  echo "$response" | jq .
-fi
-
-# Generate PDF if the flag is set
-if [ "$generate_pdf" = true ]; then
-  # Save the formatted JSON response to a temporary HTML file
-  temp_html=$(mktemp /tmp/response.XXXXXX.html)
-  echo "<pre>$(echo "$response" | jq .)</pre>" > "$temp_html"
-
-  # Convert HTML to PDF using wkhtmltopdf or pandoc with a specified PDF engine
-  if command -v wkhtmltopdf &> /dev/null; then
-    wkhtmltopdf "$temp_html" "$output_file"
-    echo "PDF report saved to $output_file"
-  elif command -v pandoc &> /dev/null; then
-    pandoc "$temp_html" --pdf-engine=weasyprint -o "$output_file"
-    echo "PDF report saved to $output_file"
-  else
-    echo "Neither wkhtmltopdf nor pandoc with a PDF engine is installed. Please install one of these tools to generate PDF reports."
-  fi
-
-  # Clean up temporary HTML file
-  rm "$temp_html"
+    submit_url
+    check_analysis_status
+    save_as_pdf
 fi
