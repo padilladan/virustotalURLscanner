@@ -2,6 +2,27 @@
 
 This script allows you to scan URLs and files for potential threats using the VirusTotal API. It can also generate a PDF report of the scan results and request rescans for URLs.
 
+1. ### Security-focused
+   * **Real-time Updates:** Frequent malware signature updates.
+   * **Community Contributions:** Public votes and comments on content safety.
+   * **Premium Sharing:** Advanced analysis for premium users.
+
+2. ### Many Contributors
+   * **Diverse Sources:** Data from multiple antivirus engines and scanners.
+   * **Comprehensive Coverage:** Heuristic engines, bad signatures, metadata extraction.
+
+3. ### Free and Unbiased
+   * **Free Service:** Available for non-commercial use.
+   * **Aggregator Role:** Unbiased results from various organizations.
+
+4. ### Community and Sharing
+   * **Public Sharing:** Community comments and votes enhance understanding.
+   * **Premium Services:** Tools for advanced threat discovery and analysis.
+
+5. ### Detailed Results
+   * **Detection Labels:** Specific threat information from each engine.
+   * **URL Scanners:** Differentiates between malware, phishing, and suspicious sites.
+
 ## Prerequisites
 
 
