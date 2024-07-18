@@ -32,18 +32,20 @@ This script allows you to scan URLs and files for potential threats using the Vi
    ````
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
    ````
-3. **jq:** This tool is required for parsing JSON responses:
-    ```sh
-    brew install jq
-    ```
-4. **curl:** For making HTTP requests:
-    ```sh
-    brew install curl
-    ```
-5. **coreutils:** Provides `shasum` for generating SHA-256 hash values:
-   ```
+3. **Tools Used:** Make sure to download all the tools necessary for the script to function:
+   ```sh
+   brew install jq
+   brew install curl
+   brew install perl
    brew install coreutils
    ```
+   * **jq:** A lightweight and flexible command-line JSON processor. 
+   * **curl:** A command-line tool for transferring data with URLs. 
+   * **perl:** Converts UNIX timestamps into human-readable dates. 
+   * **base64:** For encoding and decoding base64. 
+   * **coreutils:** For the stat command used in the script.
+
+
 ## Usage
 ```
 Usage: ./scanner.sh [-a api_key] [-u url] [-f file] [-p] [-r] [-h]
@@ -65,7 +67,9 @@ git clone git@github.com:padilladan/virustotalURLscanner.git
 
 2. **cd into the directory and run the following command to make the script executable:** 
 ```
+cd virustotalURLscanner
 chmod +x scanner.sh
+
 ```
 
 3. **Sample of script use:**
