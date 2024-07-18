@@ -65,15 +65,17 @@ Usage: ./scanner.sh [-a api_key] [-u url] [-f file] [-p] [-r] [-h]
 git clone git@github.com:padilladan/virustotalURLscanner.git
 ```
 
-2. **cd into the directory and run the following command to make the script executable:** 
+2. cd into the directory and run the following command to make the script executable from anywhere: 
 ```
 cd virustotalURLscanner
-chmod +x scanner.sh
-
+sudo cp scanner.sh /usr/local/bin/scanner
+sudo chmod +x /usr/local/bin/scanner
 ```
+* At this point, feel free to delete the clone of the repo if needed. 
+
 
 3. **Sample of script use:**
 ```
-./scanner.sh -a 123f456a789k012e -u https://www.espn.com -p
+scanner -a [your_api_key_here] -u https://www.espn.com -p
 ```
 This sample command scans the ESPN url and, with the -p flag, saves the report as a pdf on the desktop
