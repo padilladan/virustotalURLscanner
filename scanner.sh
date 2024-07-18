@@ -19,47 +19,39 @@ show_error() {
     exit 1
 }
 
-# Function to submit URL for analysis
-submit_url() {
-    response=$(curl --silent --request POST --url https://www.virustotal.com/api/v3/urls --form url="$url" --header "x-apikey: $api_key")
-    analysis_id=$(echo "$response" | jq -r '.data.id')
-    [[ $analysis_id == null ]] && show_error "Error in URL submission: $response"
-    echo "URL submitted successfully"
-    echo "Analysis ID: $analysis_id"
+# Function to encode the URL to base64 without padding
+encode_url() {
+    local url="$1"
+    echo -n "$url" | base64 | tr -d '=' | tr '/+' '_-'
 }
 
-# Function to check analysis status
-check_analysis_status() {
-    local status="queued"
-    local counter=0
-
-    while [[ "$status" == "queued" && $counter -lt 10 ]]; do
-        ((counter++))
-        response=$(curl --silent --request GET --url "https://www.virustotal.com/api/v3/analyses/$analysis_id" --header "x-apikey: $api_key")
-        status=$(echo "$response" | jq -r '.data.attributes.status')
-        echo "Analysis report requests made: $counter"
-        [[ "$status" == "queued" ]] && sleep 2
-    done
-
-    [[ "$status" == "queued" ]] && show_error "Reached 10 API requests. The analysis is taking longer than expected."
+# Function to extract and print the analysis date
+print_analysis_date() {
+    local response="$1"
+    local timestamp=$(echo "$response" | jq -r '.data.attributes.date')
+    local human_readable_date=$(perl -e "use POSIX qw(strftime); print strftime('%Y-%m-%d %H:%M:%S', localtime($timestamp));")
+    echo "Analysis Date: $human_readable_date"
 }
 
-# Function to request a URL rescan with confirmation
-request_url_rescan_confirmation() {
-    read -p "Do you want to proceed with the URL rescan? (y/n): " confirm
-    [[ "$confirm" != "y" ]] && exit 0
+# Function to extract and print the submission and modification dates
+print_submission_and_modification_dates() {
+    local response="$1"
+    local first_submission_timestamp=$(echo "$response" | jq -r '.data.attributes.first_submission_date')
+    local submission_timestamp=$(echo "$response" | jq -r '.data.attributes.last_submission_date')
+    local modification_timestamp=$(echo "$response" | jq -r '.data.attributes.last_modification_date')
 
-    response=$(curl --silent --request POST --url https://www.virustotal.com/api/v3/urls/"$analysis_id"/analyse --header "x-apikey: $api_key")
+    local human_readable_first_submission_date=$(perl -e "use POSIX qw(strftime); print strftime('%Y-%m-%d %H:%M:%S', localtime($first_submission_timestamp));")
+    local human_readable_submission_date=$(perl -e "use POSIX qw(strftime); print strftime('%Y-%m-%d %H:%M:%S', localtime($submission_timestamp));")
+    local human_readable_modification_date=$(perl -e "use POSIX qw(strftime); print strftime('%Y-%m-%d %H:%M:%S', localtime($modification_timestamp));")
 
-    if [[ "$generate_pdf" == "true" ]]; then
-        save_as_pdf
-    else
-        echo "$response" | jq '.'
-    fi
+    echo "First Submission Date: $human_readable_first_submission_date"
+    echo "Last Submission Date: $human_readable_submission_date"
+    echo "Last Modification Date: $human_readable_modification_date"
 }
 
 # Function to save the response as a PDF
 save_as_pdf() {
+    local response="$1"
     local timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
     local base_name
     if [[ -n "$file" ]]; then
@@ -74,14 +66,92 @@ save_as_pdf() {
     echo "Report saved as $json_file"
 }
 
+# Function to submit URL for analysis
+submit_url() {
+    response=$(curl --silent --request POST --url https://www.virustotal.com/api/v3/urls --form url="$url" --header "x-apikey: $api_key")
+    analysis_id=$(echo "$response" | jq -r '.data.id')
+    [[ $analysis_id == null ]] && show_error "Error in URL submission: $response"
+    echo "URL submitted successfully" >&2
+    echo "$analysis_id"
+}
+
+# Function to get URL analysis report
+get_url_report() {
+    encoded_url=$(encode_url "$url")
+
+    response=$(curl --silent --request GET \
+        --url "https://www.virustotal.com/api/v3/urls/$encoded_url" \
+        --header "accept: application/json" \
+        --header "x-apikey: $api_key")
+
+    [[ $(echo "$response" | jq -r '.data.id') == null ]] && show_error "Error in retrieving URL report: $response"
+
+    if [[ "$generate_pdf" == "true" ]]; then
+        save_as_pdf "$response"
+    else
+        echo "$response" | jq '.'
+
+        # Print the analysis date
+        print_submission_and_modification_dates "$response"
+    fi
+}
+
+# Function to check analysis status
+check_analysis_status() {
+    local analysis_id="$1"
+    local counter=0
+
+    while [[ "$status" != "completed" && $counter -lt 10 ]]; do
+        ((counter++))
+        response=$(curl --silent --request GET --url "https://www.virustotal.com/api/v3/analyses/$analysis_id" --header "x-apikey: $api_key")
+        status=$(echo "$response" | jq -r '.data.attributes.status')
+        echo "Requests made: $counter | Status: $status"
+        [[ "$status" == "queued" ]] && sleep 2
+    done
+
+    if [[ "$status" != "completed" ]]; then
+        echo "$response"
+        show_error "Analysis did not complete within the expected time."
+        echo "$response"
+        exit 1
+    fi
+}
+
+
+# Function to request a URL rescan with confirmation
+request_url_rescan_confirmation() {
+    read -p "Do you want to proceed with the URL rescan? (y/n): " confirm
+    [[ "$confirm" != "y" ]] && exit 0
+
+    encoded_url=$(encode_url "$url")
+    response=$(curl --silent --request POST --url https://www.virustotal.com/api/v3/urls/"$encoded_url"/analyse --header "x-apikey: $api_key")
+
+    # Extract the analysis ID from the response
+    analysis_id=$(echo "$response" | jq -r '.data.id')
+
+    # Check if the analysis ID is valid
+    [[ $analysis_id == null ]] && show_error "Error in URL rescan request: $response"
+
+    # Get the URL analysis report using the analysis ID
+    get_response=$(curl --silent --request GET --url https://www.virustotal.com/api/v3/analyses/"$analysis_id" --header 'accept: application/json' --header "x-apikey: $api_key")
+
+    if [[ "$generate_pdf" == "true" ]]; then
+        save_as_pdf "$get_response"
+    else
+        echo "$get_response" | jq '.'
+
+        # Print the analysis date
+        print_analysis_date "$get_response"
+    fi
+}
 
 # Function to upload a file smaller than 32MB
 upload_file() {
     response=$(curl --silent --request POST --url https://www.virustotal.com/api/v3/files --header "x-apikey: $api_key" --form file=@"$file")
     analysis_id=$(echo "$response" | jq -r '.data.id')
     [[ $analysis_id == null ]] && show_error "Error in file upload: $response"
-    echo "File uploaded successfully"
-    echo "Analysis ID: $analysis_id"
+    echo "File uploaded successfully" >&2
+#    echo "$analysis_id"
 }
 
 # Function to get a file report
@@ -89,7 +159,14 @@ get_file_report() {
     local sha256_hash=$(shasum -a 256 "$file" | awk '{print $1}')
     response=$(curl --silent --request GET --url "https://www.virustotal.com/api/v3/files/$sha256_hash" --header "accept: application/json" --header "x-apikey: $api_key")
     [[ $(echo "$response" | jq -r '.data.id') == null ]] && show_error "Error in retrieving file report: $response"
-    [[ "$generate_pdf" == "true" ]] && save_as_pdf || echo "$response" | jq '.'
+    if [[ "$generate_pdf" == "true" ]]; then
+        save_as_pdf "$response"
+    else
+        echo "$response" | jq '.'
+
+        # Print the analysis date
+        print_submission_and_modification_dates "$response"
+    fi
 }
 
 # Function to get a URL for uploading large files
@@ -149,7 +226,11 @@ if [[ -n "$file" ]]; then
         get_file_report
     fi
 elif [[ -n "$url" ]]; then
-    submit_url
-    check_analysis_status
-    [[ "$rescan" == "true" ]] && request_url_rescan_confirmation
+    if [[ "$rescan" == "true" ]]; then
+        request_url_rescan_confirmation
+    else
+        id=$(submit_url)
+        check_analysis_status "$id"
+        get_url_report "$id"
+    fi
 fi
